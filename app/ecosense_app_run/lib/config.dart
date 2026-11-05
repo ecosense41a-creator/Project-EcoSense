@@ -1,16 +1,5 @@
 // App-wide settings. Change these in ONE place instead of hunting through code.
 
-/// true  = use mock admin login (admin / ecosense123).
-/// false = use real Firebase Authentication.
-const bool kMockAuth = false;
-
-/// Alias for compatibility with screens checking mock mode.
-const bool kUseMockData = kMockAuth;
-
-/// Firebase Authentication signs in with an email, but the admin logs in with a
-/// username. The app builds the email as `<username>@<this domain>`.
-const String kUsernameEmailDomain = 'ecosense.example.com';
-
 /// If the hub has not updated /status/hub_last_seen for this many seconds,
 /// the app treats the hub as offline.
 const int kHubOfflineAfterSeconds = 30;
@@ -18,9 +7,39 @@ const int kHubOfflineAfterSeconds = 30;
 /// How many of the newest log entries to show.
 const int kLogLimit = 50;
 
-// ---- Mock login only ------------------------------------------------------
+/// The room served by the ORIGINAL flat database paths (/status, /sensors/*,
+/// /logs, /appliances/*). The existing hub keeps writing there, unchanged.
+/// Every other room lives under /rooms/<roomId>/.
+const String kPrimaryRoomId = 'living';
+const String kPrimaryRoomName = 'Living Room';
 
-const String kMockUsername = 'admin';
-const String kMockPassword = 'ecosense123';
+/// Vacancy grace period limits (seconds), shared by the slider and the hub.
+const int kGraceMinSeconds = 10;
+const int kGraceMaxSeconds = 3600;
 
-const bool kMockHubOffline = false;
+/// Used until an admin saves a value, and by the "Default" button.
+const int kGraceDefaultSeconds = 45;
+
+/// Electricity rate limits (PHP per kWh).
+const double kRateMin = 5;
+const double kRateMax = 25;
+const double kRateDefault = 12;
+
+/// How long the "Keep power on" override lasts.
+const int kPauseMinutes = 15;
+
+/// A switch request the hub has not applied after this long is shown as
+/// "unconfirmed" with a Retry button.
+const int kCommandTimeoutSeconds = 15;
+
+/// Energy buckets (/energy/...) are keyed in this fixed offset from UTC
+/// (Philippines = +8) so the app, the Cloud Function and the hub agree
+/// regardless of the phone's time zone.
+const int kEnergyUtcOffsetHours = 8;
+
+/// Fill /energy history from the appliances' energy counters inside the app
+/// (works with no Cloud Function and no hub change; any signed-in phone that
+/// has the app open does it, and a cursor in /energy_cursor prevents double
+/// counting). Set to false if you deploy backend/functions instead, otherwise
+/// energy would be counted twice.
+const bool kEnergySyncInApp = true;

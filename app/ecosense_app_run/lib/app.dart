@@ -4,29 +4,35 @@ import 'screens/home_shell.dart';
 import 'screens/login_screen.dart';
 import 'services/auth_service.dart';
 import 'services/data_repository.dart';
+import 'theme/eco_theme.dart';
+import 'theme/theme_controller.dart';
+import 'widgets/eco_background.dart';
 
 class MyApp extends StatelessWidget {
-  const MyApp({super.key, required this.auth, required this.repo});
+  const MyApp({
+    super.key,
+    required this.auth,
+    required this.repo,
+    required this.themeController,
+  });
 
   final AuthService auth;
   final DataRepository repo;
+  final ThemeController themeController;
 
   @override
   Widget build(BuildContext context) {
-    ThemeData theme(Brightness brightness) => ThemeData(
-          useMaterial3: true,
-          colorScheme: ColorScheme.fromSeed(
-            seedColor: Colors.green,
-            brightness: brightness,
-          ),
-        );
-
-    return MaterialApp(
-      title: 'EcoSense',
-      debugShowCheckedModeBanner: false,
-      theme: theme(Brightness.light),
-      darkTheme: theme(Brightness.dark),
-      home: AuthGate(auth: auth, repo: repo),
+    // Rebuilds the whole app when Settings > Appearance changes.
+    return ListenableBuilder(
+      listenable: themeController,
+      builder: (context, _) => MaterialApp(
+        title: 'EcoSense',
+        debugShowCheckedModeBanner: false,
+        theme: buildEcoTheme(Brightness.light),
+        darkTheme: buildEcoTheme(Brightness.dark),
+        themeMode: themeController.mode,
+        home: AuthGate(auth: auth, repo: repo, themeController: themeController),
+      ),
     );
   }
 }
@@ -37,10 +43,16 @@ class MyApp extends StatelessWidget {
 ///    so reopening the app lands on the home screen, not the login screen;
 ///  - signIn / signOut just change the stream, and this widget reacts.
 class AuthGate extends StatefulWidget {
-  const AuthGate({super.key, required this.auth, required this.repo});
+  const AuthGate({
+    super.key,
+    required this.auth,
+    required this.repo,
+    required this.themeController,
+  });
 
   final AuthService auth;
   final DataRepository repo;
+  final ThemeController themeController;
 
   @override
   State<AuthGate> createState() => _AuthGateState();
@@ -55,13 +67,20 @@ class _AuthGateState extends State<AuthGate> {
       stream: _authStream,
       builder: (context, snapshot) {
         if (snapshot.connectionState == ConnectionState.waiting) {
-          return const Scaffold(body: Center(child: CircularProgressIndicator()));
+          return EcoBackground(
+            child: Center(child: CircularProgressIndicator(color: context.eco.accent)),
+          );
         }
         final username = snapshot.data;
         if (username == null) {
           return LoginScreen(auth: widget.auth);
         }
-        return HomeShell(auth: widget.auth, repo: widget.repo, username: username);
+        return HomeShell(
+          auth: widget.auth,
+          repo: widget.repo,
+          username: username,
+          theme: widget.themeController,
+        );
       },
     );
   }

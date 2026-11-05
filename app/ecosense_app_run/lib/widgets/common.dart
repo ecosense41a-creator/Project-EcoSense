@@ -2,8 +2,10 @@ import 'dart:async';
 
 import 'package:flutter/material.dart';
 
-/// Rebuilds its child every [interval] so "5s ago" labels keep counting
-/// without touching the data streams.
+import '../theme/eco_theme.dart';
+
+/// Rebuilds its child every [interval] so "5s ago" labels and countdowns keep
+/// moving without touching the data streams.
 class TickBuilder extends StatefulWidget {
   const TickBuilder({
     super.key,
@@ -54,23 +56,20 @@ class MessageView extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final scheme = Theme.of(context).colorScheme;
-    final color = isError ? scheme.error : scheme.onSurfaceVariant;
+    final e = context.eco;
+    final color = isError ? e.red : e.ink2;
     return Center(
       child: Padding(
         padding: const EdgeInsets.all(32),
         child: Column(
           mainAxisSize: MainAxisSize.min,
           children: [
-            Icon(icon, size: 48, color: color),
+            Icon(icon, size: 44, color: color),
             const SizedBox(height: 12),
             Text(
               message,
               textAlign: TextAlign.center,
-              style: Theme.of(context)
-                  .textTheme
-                  .bodyLarge
-                  ?.copyWith(color: color),
+              style: EcoText.body(e).copyWith(color: color),
             ),
           ],
         ),
@@ -88,48 +87,22 @@ class InfoRow extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final text = Theme.of(context).textTheme;
-    final muted = Theme.of(context).colorScheme.onSurfaceVariant;
+    final e = context.eco;
     return Padding(
-      padding: const EdgeInsets.symmetric(vertical: 6),
+      padding: const EdgeInsets.symmetric(vertical: 7),
       child: Row(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          Expanded(
-            child: Text(label, style: text.bodyMedium?.copyWith(color: muted)),
-          ),
+          Expanded(child: Text(label, style: EcoText.small(e))),
           const SizedBox(width: 16),
           Flexible(
             child: Text(
               value,
               textAlign: TextAlign.end,
-              style: text.bodyMedium?.copyWith(fontWeight: FontWeight.w600),
+              style: EcoText.strong(e, size: 12.5),
             ),
           ),
         ],
-      ),
-    );
-  }
-}
-
-/// Small colored pill, e.g. "Detected" / "Open".
-class StatusPill extends StatelessWidget {
-  const StatusPill({super.key, required this.label, required this.color});
-
-  final String label;
-  final Color color;
-
-  @override
-  Widget build(BuildContext context) {
-    return Container(
-      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 4),
-      decoration: BoxDecoration(
-        color: color.withValues(alpha: 0.15),
-        borderRadius: BorderRadius.circular(999),
-      ),
-      child: Text(
-        label,
-        style: TextStyle(color: color, fontWeight: FontWeight.w700),
       ),
     );
   }

@@ -2,14 +2,14 @@ import 'package:firebase_core/firebase_core.dart';
 import 'package:flutter/material.dart';
 
 import 'app.dart';
-import 'config.dart';
 import 'firebase_options.dart';
 import 'services/auth_service.dart';
 import 'services/data_repository.dart';
 import 'services/firebase_auth_service.dart';
 import 'services/firebase_data_repository.dart';
-import 'services/mock_auth_service.dart';
+import 'theme/theme_controller.dart';
 
+/// Initializes services and starts the EcoSense application.
 Future<void> main() async {
   WidgetsFlutterBinding.ensureInitialized();
 
@@ -23,19 +23,13 @@ Future<void> main() async {
     debugPrint('Firebase init warning: $e');
   }
 
-  final AuthService auth;
-  if (kMockAuth) {
-    // Mock admin login: admin / ecosense123
-    final mockAuth = MockAuthService();
-    await mockAuth.init();
-    auth = mockAuth;
-  } else {
-    // Real Firebase Authentication
-    auth = FirebaseAuthService();
-  }
-
-  // Real Firebase Realtime Database for all sensors, status, logs, appliances, and config.
+  // Connect sign-in and room data to Firebase.
+  final AuthService auth = FirebaseAuthService();
   final DataRepository repo = FirebaseDataRepository();
 
-  runApp(MyApp(auth: auth, repo: repo));
+  // Light / Dark / System, cached on the phone so the first frame is right.
+  final themeController = ThemeController();
+  await themeController.load();
+
+  runApp(MyApp(auth: auth, repo: repo, themeController: themeController));
 }

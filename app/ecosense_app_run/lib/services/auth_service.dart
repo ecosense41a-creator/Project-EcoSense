@@ -7,16 +7,19 @@ class AuthFailure implements Exception {
   String toString() => message;
 }
 
-/// What the rest of the app needs from "login". The screens only know this
-/// interface, so they work the same with Firebase or with mock data.
+/// Defines the sign-in operations used by the app screens.
 abstract class AuthService {
-  /// Emits the signed-in username, or null when signed out.
+  /// Emits the signed-in email, or null when signed out.
   /// The first event is the RESTORED session, which is what makes
   /// "stay signed in after closing the app" work.
   Stream<String?> authStateChanges();
 
-  /// Throws [AuthFailure] when the username or password is wrong.
-  Future<void> signIn(String username, String password);
+  /// Stable id of the signed-in user (used for per-user settings in
+  /// /users/<uid>). Null when signed out.
+  String? get currentUid;
+
+  /// Throws [AuthFailure] when the email or password is wrong.
+  Future<void> signIn(String email, String password);
 
   Future<void> signOut();
 }

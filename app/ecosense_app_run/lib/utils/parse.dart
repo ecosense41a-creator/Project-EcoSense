@@ -1,5 +1,5 @@
 // Realtime Database returns loosely typed values (Object?). These helpers
-/// convert them safely, so a missing or wrong-typed field never crashes the app.
+// convert them safely, so a missing or wrong-typed field never crashes the app.
 
 bool asBool(Object? v) => v is bool ? v : false;
 

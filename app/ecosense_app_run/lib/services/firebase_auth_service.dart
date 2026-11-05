@@ -3,6 +3,7 @@ import 'package:firebase_auth/firebase_auth.dart';
 
 import 'auth_service.dart';
 
+/// Signs users in and out through Firebase Authentication.
 class FirebaseAuthService implements AuthService {
   final FirebaseAuth _auth = FirebaseAuth.instance;
 
@@ -12,6 +13,9 @@ class FirebaseAuthService implements AuthService {
       (user) => user?.email,
     );
   }
+
+  @override
+  String? get currentUid => _auth.currentUser?.uid;
 
   @override
   Future<void> signIn(String email, String password) async {
