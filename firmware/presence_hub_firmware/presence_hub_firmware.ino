@@ -35,6 +35,12 @@ const unsigned long CONFIG_REFRESH_INTERVAL_MS = 60000;    // how often to re-re
 const unsigned long PLUG_POLL_INTERVAL_MS = 5000;          // how often to check for an override request
 const unsigned long PLUG_RETRY_INTERVAL_MS = 10000;        // retry spacing when an auto-off fails
 const unsigned long METER_INTERVAL_MS = 15000;             // how often to read power / energy from the plug
+const unsigned long PAUSE_POLL_INTERVAL_MS = 10000;        // how often to check "Keep power on" (pause_until)
+const unsigned int  FAIL_ALERT_AFTER_ATTEMPTS = 3;         // failed auto-off attempts before a "plug unreachable" alert
+
+// Room id used by the app for the room served by the flat paths (/status, /sensors ...).
+// The app stores "Keep power on" at /room_index/<id>/pause_until.
+const char* ROOM_ID = "living";
 
 // Fallback default, used only if /config can't be reached (e.g. first boot
 // before anything's been written there, or WiFi/Firebase is briefly down).
@@ -69,6 +75,19 @@ unsigned long lastPlugAttemptMs = 0;
 unsigned long lastPlugPollMs = 0;
 long lastRequestAt = 0;
 bool requestBaselineSet = false;
+
+// App-controlled automation settings (read from Firebase)
+String automationMode = "auto";                // /config/automation_mode: "auto" or "manual"
+bool autoCutoffAllowed = true;                 // appliances/plug1/auto_cutoff_allowed (missing = true)
+unsigned long pauseUntil = 0;                  // /room_index/<ROOM_ID>/pause_until, Unix seconds
+unsigned long lastPauseCheckMs = 0;
+
+// Alerts: written once per event so the app's Alerts list does not fill with repeats
+bool blockAlertSent = false;                   // "cut-off skipped" already reported for this vacancy
+bool failAlertSent = false;                    // "plug unreachable" already reported for this vacancy
+unsigned int autoOffFailCount = 0;
+bool wifiWasLost = false;
+bool backOnlineAlertPending = false;
 
 // Energy metering + savings estimate
 float lastPowerW = 0;                 // latest watts reading
@@ -110,12 +129,17 @@ void startMdns() {
 void maintainWiFi(unsigned long now) {
   static unsigned long lastReconnectTry = 0;
   if (WiFi.status() != WL_CONNECTED) {
+    wifiWasLost = true;
     if (now - lastReconnectTry >= 5000) {
       lastReconnectTry = now;
       Serial.println("[WARN] WiFi lost - scanning for a known network");
       wifiMulti.run();
     }
     return;
+  }
+  if (wifiWasLost) {                 // connection is back after a drop
+    wifiWasLost = false;
+    backOnlineAlertPending = true;
   }
   String ip = WiFi.localIP().toString();
   if (ip != lastLocalIp) {
@@ -319,6 +343,28 @@ bool jsonBoolIsTrue(const String &json, const String &key) {
          json.indexOf("\"" + key + "\": true") >= 0;
 }
 
+bool jsonBoolIsFalse(const String &json, const String &key) {
+  return json.indexOf("\"" + key + "\":false") >= 0 ||
+         json.indexOf("\"" + key + "\": false") >= 0;
+}
+
+// Writes an entry the app shows under Activity > Alerts.
+// severity: "info", "warn" or "error". "error" is stored with type "error".
+bool writeAlert(const char* severity, const char* title, const String &detail) {
+  String sev = String(severity);
+  String logPayload = "{";
+  logPayload += "\"type\":\"" + String(sev == "error" ? "error" : "alert") + "\",";
+  logPayload += "\"message\":\"" + String(title) + "\",";
+  logPayload += "\"title\":\"" + String(title) + "\",";
+  logPayload += "\"detail\":\"" + detail + "\",";
+  logPayload += "\"severity\":\"" + sev + "\",";
+  logPayload += "\"source\":\"hub\",";
+  logPayload += "\"timestamp\":" + String(unixNow());
+  logPayload += "}";
+  Serial.println(String("[ALERT] ") + title + " - " + detail);
+  return logEventToFirebase(logPayload);
+}
+
 // Reads the plug's real state and, if it reports them, power and energy.
 bool readPlugMeter() {
   String body;
@@ -392,13 +438,41 @@ bool plugApply(bool on, const char* triggerType, const char* logMessage) {
 }
 
 // Auto-off: once per vacant transition, retried until the plug confirms.
+// Why the automatic cut-off must not happen right now ("" = it may proceed).
+String autoOffBlockReason() {
+  if (automationMode == "manual") return "Automation mode is Manual";
+  if (!autoCutoffAllowed) return "Auto cut-off is turned off for this appliance";
+  if (pauseUntil > unixNow()) return "Keep power on is active";
+  return "";
+}
+
 void runAutoOff(unsigned long now, bool vacant) {
   if (!autoOffPending) return;
   if (!vacant) { autoOffPending = false; return; }   // someone came back first
+
+  // The app can hold the cut-off back. Stay pending, so it still happens
+  // if the block ends (for example the 15 minutes run out) while the room is empty.
+  String reason = autoOffBlockReason();
+  if (reason.length() > 0) {
+    if (!blockAlertSent) {
+      blockAlertSent = true;
+      Serial.println("[AUTO-OFF] skipped: " + reason);
+      writeAlert("warn", "Automatic cut-off skipped", reason);
+    }
+    return;
+  }
+
   if (lastPlugAttemptMs != 0 && now - lastPlugAttemptMs < PLUG_RETRY_INTERVAL_MS) return;
   lastPlugAttemptMs = now;
   if (plugApply(false, "auto", "Plug turned OFF (room vacant)")) {
     autoOffPending = false;
+    autoOffFailCount = 0;
+  } else {
+    autoOffFailCount++;
+    if (autoOffFailCount >= FAIL_ALERT_AFTER_ATTEMPTS && !failAlertSent) {
+      failAlertSent = true;
+      writeAlert("error", "Plug unreachable", "Could not switch the plug off after several attempts");
+    }
   }
 }
 
@@ -444,6 +518,9 @@ void pollPlugRequests(unsigned long now) {
     plugCachedAddress = "";
   }
 
+  // Per-appliance permission from the app. Missing field = allowed.
+  autoCutoffAllowed = !jsonBoolIsFalse(json, "auto_cutoff_allowed");
+
   long requestedAt = jsonLongValue(json, "requested_at", 0);
   if (!requestBaselineSet) {          // ignore whatever was there at boot
     lastRequestAt = requestedAt;
@@ -469,7 +546,7 @@ void pollPlugRequests(unsigned long now) {
 void initPlug() {
   String json = getFromFirebase(PLUG_NODE);
   if (json == "null") {
-    String create = "{\"name\":\"Shelly Plug\",\"plug_ip\":\"" + String(PLUG_FALLBACK_IP) + "\"}";
+    String create = "{\"name\":\"Smart plug\",\"plug_ip\":\"" + String(PLUG_FALLBACK_IP) + "\"}";
     pushToFirebase(PLUG_NODE, create);
     json = "";
     lastRequestAt = 0;            // brand-new node: nothing waiting, so the first
@@ -495,6 +572,12 @@ void loadConfigFromFirebase() {
     Serial.println("[WARN] Could not read /config - keeping previous sustainedThresholdSeconds");
     return;
   }
+  String mode = jsonStringValue(json, "automation_mode");
+  if (mode == "auto" || mode == "manual") {
+    if (mode != automationMode) Serial.println("[CONFIG] automation_mode=" + mode);
+    automationMode = mode;
+  }
+
   long value = jsonLongValue(json, "sustained_threshold_seconds", (long)sustainedThresholdSeconds);
   if (value < MIN_THRESHOLD_SECONDS || value > MAX_THRESHOLD_SECONDS) {
     Serial.printf("[WARN] /config sustained_threshold_seconds=%ld is outside %ld-%ld - ignoring it, keeping %lu\n",
@@ -503,6 +586,17 @@ void loadConfigFromFirebase() {
   }
   sustainedThresholdSeconds = (unsigned long)value;
   Serial.printf("[CONFIG] sustained_threshold_seconds=%lu\n", sustainedThresholdSeconds);
+}
+
+// "Keep power on": the app writes a Unix time to /room_index/<ROOM_ID>/pause_until.
+void loadPauseFromFirebase(unsigned long now) {
+  if (now - lastPauseCheckMs < PAUSE_POLL_INTERVAL_MS) return;
+  lastPauseCheckMs = now;
+  String body = getFromFirebase(String("room_index/") + ROOM_ID + "/pause_until");
+  if (body.length() == 0) return;                    // could not read: keep the last value
+  if (body == "null") { pauseUntil = 0; return; }
+  long v = body.toInt();
+  pauseUntil = v > 0 ? (unsigned long)v : 0;
 }
 
 void setup() {
@@ -532,6 +626,11 @@ void loop() {
   unsigned long now = millis();
 
   maintainWiFi(now);
+
+  if (backOnlineAlertPending && WiFi.status() == WL_CONNECTED && timeIsSynced()) {
+    backOnlineAlertPending = false;
+    writeAlert("info", "Hub back online", "WiFi reconnected");
+  }
 
   // Periodically re-pull the tunable threshold from Firebase.
   if (now - lastConfigRefreshTime >= CONFIG_REFRESH_INTERVAL_MS) {
@@ -603,6 +702,9 @@ void loop() {
       firstFusionRun = false;
       autoOffPending = vacant;     // vacant -> switch the plug off; occupied -> cancel
       lastPlugAttemptMs = 0;
+      blockAlertSent = false;      // new vacancy: allow one new alert of each kind
+      failAlertSent = false;
+      autoOffFailCount = 0;
 
       String message = vacant ? "Room became vacant" : "Room became occupied";
       String logPayload = "{";
@@ -623,6 +725,7 @@ void loop() {
   }
 
   // ---- Smart plug: auto-off after vacancy, and homeowner override ----
+  loadPauseFromFirebase(now);
   runAutoOff(now, vacant);
   pollPlugRequests(now);
   sampleMeter(now);
